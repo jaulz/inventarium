@@ -44,9 +44,7 @@ class InventariumServiceProvider extends PackageServiceProvider
     {
       Blueprint::macro('inventarium', function (
         string $sourceName = 'title',
-        string $weight = 'A',
-        ?string $languageName = null,
-        ?string $schema = null
+        array $options = [],
       ) {
         /** @var \Illuminate\Database\Schema\Blueprint $this */
         $prefix = $this->prefix;
@@ -60,8 +58,7 @@ class InventariumServiceProvider extends PackageServiceProvider
             'prefix',
             'tableName',
             'sourceName',
-            'weight',
-            'languageName'
+            'options'
           )
         );
       });
@@ -75,18 +72,26 @@ class InventariumServiceProvider extends PackageServiceProvider
         $prefix = $command->prefix;
         $tableName = $command->tableName;
         $sourceName = $command->sourceName;
-        $weight = $command->weight;
-        $languageName = $command->languageName;
+
+        $weight = $command->options['weight'] ?? 'A';
+        $languageName = $command->options['language'] ?? null;
   
         return [
           sprintf(
             <<<SQL
-    SELECT inventarium.create(%s, %s, %s, %s, %s);
-  SQL
+              SELECT 
+                inventarium.create(
+                  %s, 
+                  %s, 
+                  convert_from((decode(%s, 'base64')), 'UTF8'), 
+                  %s, 
+                  %s
+                );
+            SQL
             ,
             $this->quoteString($schema),
             $this->quoteString($prefix . $tableName),
-            $this->quoteString($sourceName),
+            $this->quoteString(base64_encode($sourceName)),
             $this->quoteString($weight),
             $this->quoteString($languageName)
           ),

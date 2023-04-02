@@ -23,7 +23,9 @@ test('creates correct vectors', function () {
     });
 
     Schema::table('posts', function (Blueprint $table) {
-        $table->inventarium('title', 'A');
+        $table->inventarium('title', [
+            'weight' => 'A',
+        ]);
     });
 
     collect([
@@ -44,7 +46,9 @@ test('creates correct trigrams', function () {
     });
 
     Schema::table('posts', function (Blueprint $table) {
-        $table->inventarium('title', 'A');
+        $table->inventarium('title', [
+            'weight' => 'A',
+        ]);
     });
 
     collect([
@@ -66,7 +70,10 @@ test('can use different languages', function () {
     });
 
     Schema::table('posts', function (Blueprint $table) {
-        $table->inventarium('title', 'A', 'language_code');
+        $table->inventarium('title', [
+            'weight' => 'A',
+            'language' => 'language_code',
+        ]);
     });
 
     collect([
@@ -96,23 +103,86 @@ test('can use different languages', function () {
     });
 });
 
-/*test('works with JSON columns', function () {
+test('can handle source expressions', function () {
     Schema::create('posts', function (Blueprint $table) {
         $table->id();
         $table->jsonb('title');
     });
 
     Schema::table('posts', function (Blueprint $table) {
-        $table->inventarium("array_to_string(jsonb_values(title), ' ')", 'A');
+        $table->inventarium("array_to_string(ARRAY(SELECT jsonb_array_elements_text(jsonb_path_query_array(title, '$.*'))), ' ')", [
+            'weight' => 'A',
+        ]);
+    });
+
+    $post = DB::table('posts')->insertReturning([
+        'title' => json_encode([
+            'en' => 'Germany',
+            'de' => 'Deutschland',
+            'fr' => 'Alemagne'
+        ])
+    ])->first();
+
+    expect($post->vectors)->toBe("'alemagne':3 'deutschland':1 'germany':2");
+    expect($post->trigrams)->toBe('{"  a","  d","  g"," al"," de"," ge",agn,ale,and,any,chl,deu,ema,erm,eut,ger,gne,hla,lan,lem,mag,man,"nd ","ne ","ny ",rma,sch,tsc,uts}');
+});
+
+test('enables full-text search', function () {
+    Schema::create('posts', function (Blueprint $table) {
+        $table->id();
+        $table->text('title');
+        $table->text('language_code');
+    });
+
+    Schema::table('posts', function (Blueprint $table) {
+        $table->inventarium('title', [
+            'weight' => 'A',
+            'language' => 'language_code',
+        ]);
     });
 
     collect([
-        'a fat cat sat on a mat and ate a fat rat' => "'a':1,6,10 'and':8 'ate':9 'cat':3 'fat':2,11 'mat':7 'on':5 'rat':12 'sat':4",
+        'xx' => 'The Fat Rats',
+        'en' => 'The Fat Rats',
+        'de' => 'Die fetten Ratten',
     ])->each(function ($value, $key) {
-        $post = DB::table('posts')->insertReturning([
-            'title' => $key
+         DB::table('posts')->insertReturning([
+            'title' => $value,
+            'language_code' => $key,
         ])->first();
-
-        expect($post->vectors)->toBe($value);
     });
-});*/
+
+    expect(
+        collect(DB::select("SELECT * FROM posts WHERE vectors @@ to_tsquery('english', 'fat')"))->map(fn ($row) => $row->id)->toArray()
+    )->toBe([1, 2]);
+});
+
+test('enables trigram search', function () {
+    Schema::create('posts', function (Blueprint $table) {
+        $table->id();
+        $table->text('title');
+        $table->text('language_code');
+    });
+
+    Schema::table('posts', function (Blueprint $table) {
+        $table->inventarium('title', [
+            'weight' => 'A',
+            'language' => 'language_code',
+        ]);
+    });
+
+    collect([
+        'xx' => 'Lewis',
+        'en' => 'Louis',
+        'de' => 'Luis',
+    ])->each(function ($value, $key) {
+         DB::table('posts')->insertReturning([
+            'title' => $value,
+            'language_code' => $key,
+        ])->first();
+    });
+
+    expect(
+        collect(DB::select("SELECT * FROM posts WHERE trigrams % 'luis'"))->map(fn ($row) => $row->id)->toArray()
+    )->toBe([1, 2, 3]);
+});
