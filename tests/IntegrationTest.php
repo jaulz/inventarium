@@ -5,6 +5,7 @@ namespace Jaulz\Inventarium\Tests;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Jaulz\Inventarium\Facades\Inventarium;
 use Tpetry\PostgresqlEnhanced\Support\Facades\Schema;
 
 uses(RefreshDatabase::class);
@@ -16,7 +17,7 @@ beforeEach(function () {
     $migration->up();
 });
 
-test('creates correct vectors', function () {
+test('keeps searchables in sync', function () {
     Schema::create('posts', function (Blueprint $table) {
         $table->id();
         $table->text('title');
@@ -31,11 +32,45 @@ test('creates correct vectors', function () {
     collect([
         'a fat cat sat on a mat and ate a fat rat' => "'a':1,6,10 'and':8 'ate':9 'cat':3 'fat':2,11 'mat':7 'on':5 'rat':12 'sat':4",
     ])->each(function ($value, $key) {
+        // Create post
         $post = DB::table('posts')->insertReturning([
             'title' => $key
         ])->first();
 
-        expect($post->vectors)->toBe($value);
+        expect($post->search_vectors)->toBe($value);
+        expect($post->search_text)->toBe($key);
+
+        $searchablePost = DB::table(Inventarium::getSchema() . '.searchables')
+        ->where('primary_key_value', $post->id)->first();
+
+        expect($searchablePost->vectors)->toBe($post->search_vectors);
+        expect($searchablePost->text)->toBe($post->search_text);
+
+        // Update post
+        $post = DB::table('posts')
+        ->where('id', $post->id)
+        ->updateReturning([
+            'title' => 'or maybe not'
+        ])->first();
+
+        expect($post->search_vectors)->toBe("'maybe':2 'not':3 'or':1");
+        expect($post->search_text)->toBe('or maybe not');
+
+        $searchablePost = DB::table(Inventarium::getSchema() . '.searchables')
+        ->where('primary_key_value', $post->id)->first();
+
+        expect($searchablePost->vectors)->toBe($post->search_vectors);
+        expect($searchablePost->text)->toBe($post->search_text);
+
+        // Delete post
+        DB::table('posts')
+        ->where('id', $post->id)
+        ->deleteReturning();
+
+        $searchablePost = DB::table(Inventarium::getSchema() . '.searchables')
+        ->where('primary_key_value', $post->id)->first();
+
+        expect($searchablePost)->toBe(null);
     });
 });
 
@@ -72,7 +107,7 @@ test('can use different languages', function () {
             'language_code' => $key,
         ])->first();
 
-        expect($post->vectors)->toBe($value['vectors']);
+        expect($post->search_vectors)->toBe($value['vectors']);
     });
 });
 
@@ -97,11 +132,7 @@ test('can handle JSON values', function () {
         ])
     ])->first();
 
-    expect($post->vectors)->toBe("'alemagne':3 'deutschland':1 'germany':2");
-    expect(
-        collect(DB::select("SELECT * FROM posts WHERE title % 'steven'"))
-        ->map(fn ($row) => $row->id)->toArray()
-    )->toBe([1, 2, 3]);
+    expect($post->search_vectors)->toBe("'alemagne':6 'de':1 'deutschland':2 'en':3 'fr':5 'germany':4");
 });
 
 test('enables full-text search', function () {
@@ -130,7 +161,7 @@ test('enables full-text search', function () {
     });
 
     expect(
-        collect(DB::select("SELECT * FROM posts WHERE vectors @@ to_tsquery('english', 'fat')"))->map(fn ($row) => $row->id)->toArray()
+        collect(DB::select("SELECT * FROM posts WHERE search_vectors @@ to_tsquery('english', 'fat')"))->map(fn ($row) => $row->id)->toArray()
     )->toBe([1, 2]);
 });
 
@@ -138,7 +169,7 @@ test('enables trigram search', function () {
     Schema::create('posts', function (Blueprint $table) {
         $table->id();
         $table->text('title');
-        $table->text('language_code');
+        $table->text('language_code')->nullable();
     });
 
     Schema::table('posts', function (Blueprint $table) {
@@ -149,13 +180,13 @@ test('enables trigram search', function () {
     });
 
     collect([
-        'xx' => 'Stephen',
-        'en' => 'Steve',
-        'de' => 'Seven',
+        'Stephen',
+        'Steve',
+        'Seven',
     ])->each(function ($value, $key) {
          DB::table('posts')->insertReturning([
             'title' => $value,
-            'language_code' => $key,
+            'language_code' => 'en',
         ])->first();
     });
 
