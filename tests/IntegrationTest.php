@@ -12,7 +12,7 @@ uses(RefreshDatabase::class);
 beforeEach(function () {
     DB::statement('CREATE EXTENSION IF NOT EXISTS pg_trgm');
 
-    $migration = include __DIR__ . '/../database/migrations/2013_01_09_141532_create_inventarium_extension.php.stub';
+    $migration = include __DIR__ . '/../database/migrations/create_inventarium_extension.php.stub';
     $migration->up();
 });
 
@@ -39,29 +39,6 @@ test('creates correct vectors', function () {
     });
 });
 
-test('creates correct trigrams', function () {
-    Schema::create('posts', function (Blueprint $table) {
-        $table->id();
-        $table->text('title');
-    });
-
-    Schema::table('posts', function (Blueprint $table) {
-        $table->inventarium('title', [
-            'weight' => 'A',
-        ]);
-    });
-
-    collect([
-        'a fat cat sat on a mat and ate a fat rat' => '{"  a","  c","  f","  m","  o","  r","  s"," a "," an"," at"," ca"," fa"," ma"," on"," ra"," sa",and,"at ",ate,cat,fat,mat,"nd ","on ",rat,sat,"te "}',
-    ])->each(function ($value, $key) {
-        $post = DB::table('posts')->insertReturning([
-            'title' => $key
-        ])->first();
-
-        expect($post->trigrams)->toBe($value);
-    });
-});
-
 test('can use different languages', function () {
     Schema::create('posts', function (Blueprint $table) {
         $table->id();
@@ -80,17 +57,14 @@ test('can use different languages', function () {
         'xx' => [
             'title' => 'The Fat Rats',
             'vectors' => "'fat':2 'rats':3 'the':1",
-            'trigrams' => '{"  f","  r","  t"," fa"," ra"," th","at ",ats,fat,"he ",rat,the,"ts "}',
         ],
         'en' => [
             'title' => 'The Fat Rats',
             'vectors' => "'fat':2 'rat':3",
-            'trigrams' => '{"  f","  r"," fa"," ra","at ",fat,rat}',
         ],
         'de' => [
             'title' => 'Die fetten Ratten',
             'vectors' => "'fett':2 'ratt':3",
-            'trigrams' => '{"  f","  r"," fe"," ra",att,ett,fet,rat,"tt "}',
         ],
     ])->each(function ($value, $key) {
         $post = DB::table('posts')->insertReturning([
@@ -99,18 +73,18 @@ test('can use different languages', function () {
         ])->first();
 
         expect($post->vectors)->toBe($value['vectors']);
-        expect($post->trigrams)->toBe($value['trigrams']);
     });
 });
 
-test('can handle source expressions', function () {
+test('can handle JSON values', function () {
     Schema::create('posts', function (Blueprint $table) {
         $table->id();
         $table->jsonb('title');
     });
 
     Schema::table('posts', function (Blueprint $table) {
-        $table->inventarium("array_to_string(ARRAY(SELECT jsonb_array_elements_text(jsonb_path_query_array(title, '$.*'))), ' ')", [
+        // array_to_string(ARRAY(SELECT jsonb_array_elements_text(jsonb_path_query_array(title, '$.*'))), ' ')
+        $table->inventarium("title", [
             'weight' => 'A',
         ]);
     });
@@ -124,7 +98,10 @@ test('can handle source expressions', function () {
     ])->first();
 
     expect($post->vectors)->toBe("'alemagne':3 'deutschland':1 'germany':2");
-    expect($post->trigrams)->toBe('{"  a","  d","  g"," al"," de"," ge",agn,ale,and,any,chl,deu,ema,erm,eut,ger,gne,hla,lan,lem,mag,man,"nd ","ne ","ny ",rma,sch,tsc,uts}');
+    expect(
+        collect(DB::select("SELECT * FROM posts WHERE title % 'steven'"))
+        ->map(fn ($row) => $row->id)->toArray()
+    )->toBe([1, 2, 3]);
 });
 
 test('enables full-text search', function () {
@@ -172,9 +149,9 @@ test('enables trigram search', function () {
     });
 
     collect([
-        'xx' => 'Lewis',
-        'en' => 'Louis',
-        'de' => 'Luis',
+        'xx' => 'Stephen',
+        'en' => 'Steve',
+        'de' => 'Seven',
     ])->each(function ($value, $key) {
          DB::table('posts')->insertReturning([
             'title' => $value,
@@ -183,6 +160,7 @@ test('enables trigram search', function () {
     });
 
     expect(
-        collect(DB::select("SELECT * FROM posts WHERE trigrams % 'luis'"))->map(fn ($row) => $row->id)->toArray()
+        collect(DB::select("SELECT * FROM posts WHERE title % 'steven'"))
+        ->map(fn ($row) => $row->id)->toArray()
     )->toBe([1, 2, 3]);
 });

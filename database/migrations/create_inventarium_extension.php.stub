@@ -1,0 +1,598 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Support\Facades\DB;
+use Tpetry\PostgresqlEnhanced\Schema\Blueprint;
+use Tpetry\PostgresqlEnhanced\Support\Facades\Schema;
+use Jaulz\Inventarium\Facades\Inventarium;
+
+return new class extends Migration {
+  /**
+   * Run the migrations.
+   *
+   * @return void
+   */
+  public function up()
+  {
+    DB::transaction(function () {
+      DB::statement('CREATE SCHEMA IF NOT EXISTS ' . Inventarium::getSchema());
+
+      // Create artifacts 
+      $this->createTypes();
+      $this->createUtilityFunctions();
+      $this->createFunctions();
+      $this->createTables();
+      $this->seedTables();
+      $this->createTriggerFunctions();
+      $this->createTriggers();
+    });
+  }
+
+  /**
+   * Reverse the migrations.
+   *
+   * @return void
+   */
+  public function down()
+  {
+    DB::statement('DROP SCHEMA IF EXISTS ' . Inventarium::getSchema() . ' CASCADE;');
+  }
+
+  /**
+   * Create types.
+   *
+   * @return void
+   */
+  public function createTypes() {
+
+  }
+
+  /**
+   * Create utility functions.
+   *
+   * @return void
+   */
+  public function createUtilityFunctions() {
+    Schema::createFunctionOrReplace(
+      name: Inventarium::getSchema() . '.get_record_value',
+      parameters: [
+        'p_element' => 'anyelement',
+        'p_key' => 'text',
+      ],
+      return: 'text',
+      body: sprintf(
+        <<<PLPGSQL
+          BEGIN
+            RETURN row_to_json(p_element) ->> p_key;
+          END;
+        PLPGSQL
+      ),
+      language: 'PLPGSQL'
+    );
+
+    Schema::createFunctionOrReplace(
+      name: Inventarium::getSchema() . '.get_values',
+      parameters: [
+        'p_element' => 'jsonb',
+      ],
+      return: 'text',
+      body: sprintf(
+        <<<PLPGSQL
+          DECLARE
+            values text;
+          BEGIN
+            SELECT 
+                string_agg(value,' ') 
+              INTO 
+                values 
+              FROM
+                jsonb_each_text(p_element);
+
+            RETURN values;
+          END;
+        PLPGSQL
+      ),
+      language: 'PLPGSQL',
+      options: [
+        'volatility' => 'immutable',
+      ]
+    );
+
+    Schema::createFunctionOrReplace(
+      name: Inventarium::getSchema() . '.get_column_type',
+      parameters: [
+        'p_table_schema' => 'text',
+        'p_table_name' => 'text',
+        'p_column_name' => 'text',
+      ],
+      return: 'text',
+      body: sprintf(
+        <<<PLPGSQL
+          DECLARE
+            column_type text;
+          BEGIN
+            EXECUTE format(
+                '
+                  SELECT data_type 
+                    FROM information_schema.columns 
+                    WHERE 
+                        table_schema = %%L
+                      AND 
+                        table_name = %%L
+                      AND 
+                        column_name = %%L
+                ',
+                p_table_schema,
+                p_table_name,
+                p_column_name
+              ) 
+              INTO column_type;
+
+            RETURN column_type;
+          END;
+        PLPGSQL
+      ),
+      language: 'PLPGSQL'
+    );
+
+    Schema::createFunctionOrReplace(
+      name: Inventarium::getSchema() . '.get_primary_key_name',
+      parameters: [
+        'p_table_schema' => 'text',
+        'p_table_name' => 'text',
+      ],
+      return: 'text',
+      body: sprintf(
+        <<<PLPGSQL
+          DECLARE
+            primary_key_name text;
+          BEGIN
+            EXECUTE format(
+                '
+                  SELECT c.column_name
+                    FROM information_schema.table_constraints tc 
+                    JOIN information_schema.constraint_column_usage AS ccu 
+                      USING (constraint_schema, constraint_name) 
+                    JOIN information_schema.columns AS c 
+                      ON 
+                          c.table_schema = tc.constraint_schema
+                        AND 
+                          tc.table_name = c.table_name 
+                        AND 
+                          ccu.column_name = c.column_name
+                    WHERE 
+                        constraint_type = ''PRIMARY KEY''
+                      AND 
+                        tc.table_schema = %%L
+                      AND 
+                        tc.table_name = %%L
+                ',
+                p_table_schema,
+                p_table_name
+              ) 
+              INTO primary_key_name;
+
+            RETURN primary_key_name;
+          END;
+        PLPGSQL
+      ),
+      language: 'PLPGSQL'
+    );
+  }
+
+  /**
+   * Create functions.
+   *
+   * @return void
+   */
+  public function createFunctions() {      
+    Schema::createFunctionOrReplace(
+      name: Inventarium::getSchema() . '.create',
+      parameters: [
+        'p_table_schema' => 'text',
+        'p_table_name' => 'text',
+        'p_source_name' => 'text',
+        'p_weight' => "char DEFAULT 'A'",
+        'p_language_name' => "text DEFAULT NULL",
+        'p_search_config' => "text DEFAULT 'simple'",
+      ],
+      return: 'void',
+      body: sprintf(
+        <<<PLPGSQL
+          BEGIN
+            INSERT INTO %1\$s.definitions 
+                (table_schema, table_name, source_name, weight, language_name, search_config) 
+              VALUES 
+                (p_table_schema, p_table_name, p_source_name, p_weight, p_language_name, p_search_config);
+          END;
+        PLPGSQL
+        ,
+        Inventarium::getSchema()
+      ),
+      language: 'PLPGSQL'
+    );
+  }
+
+  /**
+   * Create tables.
+   *
+   * @return void
+   */
+  public function createTables() { 
+    Schema::create(Inventarium::getSchema() . '.definitions', function (
+      Blueprint $table
+    ) {
+      $table->id()->generatedAs();
+
+      $table->text('table_schema');
+      $table->text('table_name');
+      $table->text('source_name');
+      $table->char('weight', 1)->default('A');
+      $table->text('language_name')->nullable();
+      $table->text('search_config')->default('simple');
+      $table->text('primary_key_name');
+      $table->text('column_type');
+    });
+
+    Schema::create(Inventarium::getSchema() . '.searchables', function (Blueprint $table) {
+      $table->id()->generatedAs();
+
+      $table->unsignedBigInteger('definition_id');
+      $table
+        ->foreign('definition_id')
+        ->references('id')
+        ->on(Inventarium::getSchema() . '.definitions')
+        ->cascadeOnDelete();
+
+      $table->text('primary_key');
+
+      $table->timestampTz('created_at')->default(DB::raw('NOW()'));
+      $table->timestampTz('updated_at')->default(DB::raw('NOW()'));
+
+      $table->index(['definition_id', 'primary_key']);
+    });
+
+    DB::statement(
+      sprintf(<<<SQL
+          ALTER TABLE %1\$s.searchables
+            ADD COLUMN vectors tsvector;
+        SQL, 
+        Inventarium::getSchema()
+      )
+    );
+
+    Schema::create(Inventarium::getSchema() . '.languages', function (Blueprint $table) {
+      $table->char('code', 2)->unique();
+    });
+
+    DB::statement(
+      sprintf(<<<SQL
+          ALTER TABLE %1\$s.languages
+            ADD COLUMN search_config regconfig;
+        SQL, 
+        Inventarium::getSchema()
+      )
+    );
+  }
+
+  /**
+   * Seed tables.
+   *
+   * @return void
+   */
+  public function seedTables() {
+    $mappings = [
+      "arabic" => ["ar"],
+      "arabic" => ["hy"],
+      "basque" => ["eu"],
+      "catalan" => ["ca"],
+      "danish" => ["da"],
+      "dutch" => ["nl"],
+      "english" => ["en"],
+      "finnish" => ["fi"],
+      "french" => ["fr"],
+      "german" => ["de"],
+      "greek" => ["el"],
+      "hindi" => ["hi"],
+      "hungarian" => ["hu"],
+      "indonesian" => ["id"],
+      "irish" => ["ga"],
+      "italian" => ["it"],
+      "lithuanian" => ["lt"],
+      "nepali" => ["ne"],
+      "norwegian" => ["no"],
+      "portuguese" => ["pt"],
+      "romanian" => ["ro"],
+      "russian" => ["ru"],
+      "serbian" => ["sr"],
+      "spanish" => ["es"],
+      "swedish" => ["sv"],
+      "tamil" => ["ta"],
+      "turkish" => ["tr"],
+      "yiddish" => ["yi"],
+    ];
+
+    foreach ($mappings as $searchConfig => $languageCodes) {
+      foreach ($languageCodes as $languageCode) {
+        DB::table(Inventarium::getSchema() . '.languages')->insert([
+          'code' => $languageCode,
+          'search_config' => $searchConfig,
+        ]);
+      }
+    };
+  }
+
+  /**
+   * Create trigger functions.
+   *
+   * @return void
+   */
+  public function createTriggerFunctions() {
+    Schema::createFunctionOrReplace(
+      name: Inventarium::getSchema() . '.definitions__before',
+      parameters: [],
+      return: 'trigger',
+      body: sprintf(
+        <<<PLPGSQL
+          BEGIN
+            -- Prevent updates
+            IF TG_OP = 'UPDATE' THEN
+              NEW.table_schema = OLD.table_schema;
+              NEW.table_name = OLD.table_name;
+              NEW.source_name = OLD.source_name;
+              NEW.weight = OLD.weight;
+              NEW.language_name = OLD.language_name;
+              NEW.search_config = OLD.search_config;
+            END IF;
+
+            -- Determine primary key name automatically
+            NEW.primary_key_name = %1\$s.get_primary_key_name(NEW.table_schema, NEW.table_name);
+
+            -- Determine column type automatically
+            NEW.column_type = %1\$s.get_column_type(NEW.table_schema, NEW.table_name, NEW.source_name);
+            
+            IF NEW.primary_key_name IS NULL THEN
+              RAISE EXCEPTION 'Table %%.%% does not have a primary key.', NEW.table_schema, NEW.table_name;
+            END IF;
+
+            RETURN NEW;
+          END;
+        PLPGSQL
+        ,
+        Inventarium::getSchema()
+      ),
+      language: 'PLPGSQL'
+    );
+
+    Schema::createFunctionOrReplace(
+      name: Inventarium::getSchema() . '.definitions__after',
+      parameters: [],
+      return: 'trigger',
+      body: sprintf(
+        <<<PLPGSQL
+          DECLARE
+            trigger_name text;
+            index_name text;
+            index_column_names text;
+            id int;
+            column_type text;
+          BEGIN
+            -- Log
+            RAISE DEBUG '
+              %1\$s.definition__after: start (
+                TG_NAME=%%, 
+                TG_OP=%%, 
+                TG_TABLE_NAME=%%, 
+                OLD=%%, 
+                NEW=%%, 
+                TG_ARGV=%%
+              )', 
+              TG_NAME, 
+              TG_OP, 
+              TG_TABLE_NAME, 
+              OLD::text, 
+              NEW::text, 
+              TG_ARGV::text;
+
+            -- Determine names
+            id = CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END;
+            trigger_name = format('9999_inventarium_%%s__before', id);
+            index_name = format('%%s_inventarium', NEW.table_name, id);
+
+            IF TG_OP = 'DELETE' THEN
+              RETURN OLD;
+            END IF;
+
+            IF TG_OP = 'INSERT' THEN
+              -- Create columns
+              EXECUTE format(
+                'ALTER TABLE %%I.%%I ADD COLUMN IF NOT EXISTS %%I tsvector', 
+                NEW.table_schema,
+                NEW.table_name,
+                'vectors'
+              );
+
+              -- Create trigger
+              EXECUTE format('DROP TRIGGER IF EXISTS %%I ON %%I.%%I', trigger_name, NEW.table_schema, NEW.table_name);
+              EXECUTE format('
+                CREATE TRIGGER %%I
+                  BEFORE INSERT OR UPDATE OR DELETE
+                  ON %%I.%%I
+                  FOR EACH ROW 
+                  EXECUTE FUNCTION %1\$s.inventarium__before()
+                ', trigger_name, NEW.table_schema, NEW.table_name);
+            END IF;
+
+            -- Create index
+            IF TG_OP = 'INSERT' THEN
+              EXECUTE format('
+                CREATE INDEX IF NOT EXISTS %%I
+                  ON %%I.%%I USING GIN ((%%I))
+                ', index_name, NEW.table_schema, NEW.table_name, 'vectors');
+
+              IF NEW.column_type = 'json' OR NEW.column_type = 'jsonb' THEN
+                EXECUTE format('
+                  CREATE INDEX IF NOT EXISTS %%I
+                    ON %%I.%%I USING GIN ((%1\$s.get_values(%%I)) gin_trgm_ops)
+                  ', index_name, NEW.table_schema, NEW.table_name, NEW.source_name);
+              ELSE
+                EXECUTE format('
+                  CREATE INDEX IF NOT EXISTS %%I
+                    ON %%I.%%I USING GIN ((%%I::text) gin_trgm_ops)
+                  ', index_name, NEW.table_schema, NEW.table_name, NEW.source_name);
+              END IF;  
+            END IF;  
+
+            RETURN NEW;
+          END;
+        PLPGSQL
+        ,
+        Inventarium::getSchema()
+      ),
+      language: 'PLPGSQL'
+    );
+
+    Schema::createFunctionOrReplace(
+      name: Inventarium::getSchema() . '.inventarium__before',
+      parameters: [],
+      return: 'trigger',
+      body: sprintf(
+        <<<PLPGSQL
+          DECLARE
+            definition %1\$s.definitions%%rowtype;
+
+            vectors tsvector;
+            source_value text;
+            language_value text;
+            search_config regconfig DEFAULT 'simple';
+          BEGIN
+            -- Log
+            RAISE DEBUG '
+              %1\$s.inventarium__before: start (
+                TG_NAME=%%, 
+                TG_OP=%%, 
+                TG_TABLE_SCHEMA=%%, 
+                TG_TABLE_NAME=%%, 
+                OLD=%%, 
+                NEW=%%, 
+                TG_ARGV=%%
+              )', 
+              TG_NAME, 
+              TG_OP, 
+              TG_TABLE_SCHEMA,
+              TG_TABLE_NAME, 
+              OLD::text, 
+              NEW::text, 
+              TG_ARGV::text;
+
+            -- Nothing to do yet
+            IF TG_OP = 'DELETE' THEN
+              RETURN OLD;
+            END IF;
+
+            -- Go through all definitions and create vectors
+            vectors := to_tsvector('simple', '');
+            FOR definition IN 
+              SELECT * FROM %1\$s.definitions 
+                WHERE
+                    table_schema = TG_TABLE_SCHEMA
+                  AND
+                    table_name = TG_TABLE_NAME
+            LOOP
+              -- Get source value
+              IF definition.column_type = 'json' OR definition.column_type = 'jsonb' THEN
+                EXECUTE 
+                  format(
+                    'SELECT %1\$s.get_values(%%s) FROM (SELECT $1.*) record;',
+                    definition.source_name
+                  )
+                  USING NEW 
+                  INTO source_value;
+              ELSE
+                EXECUTE 
+                  format(
+                    'SELECT %%s FROM (SELECT $1.*) record;',
+                    definition.source_name
+                  )
+                  USING NEW 
+                  INTO source_value;
+              END IF;
+
+              -- Get language value
+              EXECUTE 
+                format(
+                  'SELECT %%s FROM (SELECT $1.*) record;',
+                  definition.language_name
+                )
+                USING NEW 
+                INTO language_value;
+
+              -- Get search config from language table
+              IF language_value IS NOT NULL AND language_value != '' THEN
+                SELECT 
+                    %1\$s.languages.search_config 
+                  FROM
+                    %1\$s.languages
+                  WHERE
+                    code = language_value
+                  LIMIT 1
+                  INTO search_config;
+              END IF;
+
+              -- Fallback to default search config
+              IF search_config IS NULL THEN
+                search_config := definition.search_Config;
+              END IF;
+
+              vectors = vectors || to_tsvector(
+                search_config,
+                source_value
+              );
+            END LOOP;
+
+            -- Assign computed vectors
+            NEW.vectors = vectors;
+
+            RETURN NEW;
+            END;
+          PLPGSQL
+        ,
+        Inventarium::getSchema()
+      ),
+      language: 'PLPGSQL'
+    );
+  }
+
+  /**
+   * Create triggers.
+   *
+   * @return void
+   */
+  public function createTriggers() {
+    DB::statement(
+      sprintf(
+        <<<PLPGSQL
+          CREATE OR REPLACE TRIGGER "100_prepare_before"
+            BEFORE INSERT OR UPDATE OR DELETE ON %1\$s.definitions
+            FOR EACH ROW 
+            EXECUTE FUNCTION %1\$s.definitions__before();
+        PLPGSQL
+        ,
+        Inventarium::getSchema()
+      )
+    );
+
+    DB::statement(
+      sprintf(
+        <<<PLPGSQL
+          CREATE OR REPLACE TRIGGER "100_create_artifacts_after"
+            AFTER INSERT OR UPDATE OR DELETE ON %1\$s.definitions
+            FOR EACH ROW 
+            EXECUTE FUNCTION %1\$s.definitions__after();
+        PLPGSQL
+        ,
+        Inventarium::getSchema()
+      )
+    );
+  }
+};

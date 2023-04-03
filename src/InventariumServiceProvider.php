@@ -29,7 +29,8 @@ class InventariumServiceProvider extends PackageServiceProvider
             ->name('inventarium')
             ->hasConfigFile('inventarium')
             ->publishesServiceProvider('InventariumServiceProvider')
-            ->hasMigration('2013_01_09_141532_create_inventarium_extension')
+            ->hasMigration('create_inventarium_extension')
+            ->hasMigration('grant_usage_on_inventarium_extension')
             ->hasInstallCommand(function(InstallCommand $command) {
                 $command
                     ->publishMigrations()
