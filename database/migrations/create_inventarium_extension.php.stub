@@ -455,6 +455,19 @@ return new class extends Migration {
                 ', index_name, NEW.table_schema, NEW.table_name, NEW.source_name);
             END IF;  
 
+            -- Fill initially
+            IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
+              EXECUTE format('
+                  UPDATE %%I.%%I 
+                    SET %%I = %%I
+                ', 
+                NEW.table_schema, 
+                NEW.table_name, 
+                NEW.source_name, 
+                NEW.source_name
+              );
+            END IF;  
+
             RETURN NEW;
           END;
         PLPGSQL

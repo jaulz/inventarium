@@ -74,6 +74,47 @@ test('keeps searchables in sync', function () {
     });
 });
 
+test('creates searchables retroperspectively', function () {
+    Schema::create('posts', function (Blueprint $table) {
+        $table->id();
+        $table->text('title');
+    });
+
+    $posts = [
+        'a fat cat sat on a mat and ate a fat rat' => "'a':1,6,10 'and':8 'ate':9 'cat':3 'fat':2,11 'mat':7 'on':5 'rat':12 'sat':4",
+    ];
+
+    collect($posts)->each(function ($value, $key) {
+        // Create post
+        $post = DB::table('posts')->insertReturning([
+            'title' => $key
+        ])->first();
+    });
+
+    // Make column searchable after data was created
+    Schema::table('posts', function (Blueprint $table) {
+        $table->inventarium('title', [
+            'weight' => 'A',
+        ]);
+    });
+
+    collect($posts)->each(function ($value, $key) {
+        // Find post
+        $post = DB::table('posts')->where([
+            'title' => $key
+        ])->first();
+
+        expect($post->search_vectors)->toBe($value);
+        expect($post->search_text)->toBe($key);
+
+        $searchablePost = DB::table(Inventarium::getSchema() . '.searchables')
+        ->where('primary_key_value', $post->id)->first();
+
+        expect($searchablePost->vectors)->toBe($post->search_vectors);
+        expect($searchablePost->text)->toBe($post->search_text);
+    });
+});
+
 test('can use different languages', function () {
     Schema::create('posts', function (Blueprint $table) {
         $table->id();
