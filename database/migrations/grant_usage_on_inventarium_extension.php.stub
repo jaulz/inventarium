@@ -11,7 +11,7 @@ return new class extends Migration {
    */
   public function up()
   {
-    Inventarium::grant('app');
+    Inventarium::grant(Inventarium::getSchema());
   }
 
   /**
@@ -21,6 +21,6 @@ return new class extends Migration {
    */
   public function down()
   {
-    Inventarium::ungrant('app');
+    Inventarium::ungrant(Inventarium::getSchema());
   }
 };
