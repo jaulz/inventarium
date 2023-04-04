@@ -28,7 +28,6 @@ class InventariumServiceProvider extends PackageServiceProvider
         $package
             ->name('inventarium')
             ->hasConfigFile('inventarium')
-            ->publishesServiceProvider('InventariumServiceProvider')
             ->hasMigration('create_inventarium_extension')
             ->hasMigration('grant_usage_on_inventarium_extension')
             ->hasInstallCommand(function(InstallCommand $command) {
@@ -36,7 +35,6 @@ class InventariumServiceProvider extends PackageServiceProvider
                     ->publishMigrations()
                     ->publishConfigFile()
                     ->askToRunMigrations()
-                    ->copyAndRegisterServiceProviderInApp()
                     ->askToStarRepoOnGitHub('jaulz/inventarium');
             });
     }
