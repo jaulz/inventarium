@@ -488,10 +488,13 @@ return new class extends Migration {
 
             search_vectors tsvector;
             search_texts text[] DEFAULT '{}';
-            source_value text;
-            language_value text;
+            new_source_value text;
+            old_source_value text;
+            new_language_value text;
+            old_language_value text;
             search_config regconfig DEFAULT 'simple';
             primary_key_value text;
+            changed bool DEFAULT FALSE;
           BEGIN
             -- Log
             RAISE DEBUG '
@@ -549,20 +552,22 @@ return new class extends Migration {
                   AND
                     table_name = TG_TABLE_NAME
             LOOP
-              -- Get source value
-              source_value = %1\$s.get_record_value(NEW, definition.source_name);
+              -- Get source values
+              new_source_value = %1\$s.get_record_value(NEW, definition.source_name);
+              old_source_value = %1\$s.get_record_value(OLD, definition.source_name);
 
-              -- Get language value
-              language_value = %1\$s.get_record_value(NEW, definition.language_name);
+              -- Get language values
+              new_language_value = %1\$s.get_record_value(NEW, definition.language_name);
+              old_language_value = %1\$s.get_record_value(OLD, definition.language_name);
 
               -- Get search config from language table
-              IF language_value IS NOT NULL AND language_value != '' THEN
+              IF new_language_value IS NOT NULL AND new_language_value != '' THEN
                 SELECT 
                     %1\$s.languages.search_config 
                   FROM
                     %1\$s.languages
                   WHERE
-                    code = language_value
+                    code = new_language_value
                   LIMIT 1
                   INTO search_config;
               END IF;
@@ -574,10 +579,20 @@ return new class extends Migration {
 
               search_vectors = search_vectors || to_tsvector(
                 search_config,
-                source_value
+                new_source_value
               );
-              search_texts = array_append(search_texts, source_value);
+              search_texts = array_append(search_texts, new_source_value);
+
+              -- Check if anything has changed
+              IF new_source_value != old_source_value OR new_language_value != old_language_value THEN
+                changed = TRUE;
+              END IF;
             END LOOP;
+
+            -- Do not update if nothing has changed
+            IF changed = FALSE THEN
+              -- RETURN NEW;
+            END IF;
 
             -- Assign computed vectors and text
             NEW.search_vectors = search_vectors;
