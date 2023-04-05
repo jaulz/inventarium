@@ -2,7 +2,7 @@
     "name": "jaulz/inventarium",
     "type": "library",
     "require": {
-      "laravel/framework": "^9.51",
+      "laravel/framework": "^9.0 || ^10.0",
       "spatie/laravel-package-tools": "^1.14",
       "tpetry/laravel-postgresql-enhanced": "^0.26.0"
     },
